@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/canonicalmg/openclaw-promitheus.git"
+    "url": "git+https://github.com/canonicalmg/openclaw-promitheus.git"
   },
   "keywords": [
     "openclaw",
@@ -16,7 +16,9 @@
     "ai"
   ],
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "files": [
     "index.ts",
