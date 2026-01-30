@@ -1,6 +1,6 @@
 {
   "name": "openclaw-promitheus",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Promitheus AI companion plugin for OpenClaw",
   "type": "module",
   "author": "CMG Labs",
@@ -20,6 +20,7 @@
   },
   "files": [
     "index.ts",
-    "openclaw.plugin.json"
+    "openclaw.plugin.json",
+    "README.md"
   ]
 }
