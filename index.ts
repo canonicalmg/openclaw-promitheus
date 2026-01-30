@@ -381,9 +381,13 @@ export default function register(api: any) {
       required: ["event_type", "summary"],
     },
     execute: async (params: { event_type: string; summary: string; significance?: number }) => {
-      const eventType = params.event_type || "general";
-      const summary = params.summary || "No description";
-      const result = prom.logEvent(eventType, summary, params.significance);
+      // Debug: log what we receive
+      const debugPath = require("path").join(require("os").homedir(), ".promitheus", "debug.json");
+      require("fs").writeFileSync(debugPath, JSON.stringify({ params, timestamp: Date.now() }, null, 2));
+      
+      const eventType = params?.event_type || "general";
+      const summary = params?.summary || "No description";
+      const result = prom.logEvent(eventType, summary, params?.significance);
       return {
         status: "ok",
         logged: eventType,
