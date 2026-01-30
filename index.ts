@@ -284,7 +284,19 @@ export default function register(api: any) {
 
   // Register agent:bootstrap hook to inject STATE.md before every response
   api.registerHook("agent:bootstrap", async (event: any) => {
-    if (!event.context?.bootstrapFiles) return;
+    api.logger.info?.("[Promitheus] Hook fired: " + event.type + ":" + event.action);
+    
+    // Check event type
+    if (event.type !== "agent" || event.action !== "bootstrap") {
+      api.logger.debug?.("[Promitheus] Wrong event type, skipping");
+      return;
+    }
+    
+    // Check context
+    if (!event.context || !Array.isArray(event.context.bootstrapFiles)) {
+      api.logger.warn?.("[Promitheus] No bootstrapFiles array in context");
+      return;
+    }
     
     const state = prom.getState();
     const thoughts = prom.getThoughts();
@@ -322,7 +334,7 @@ ${guidance.join("\n")}
       event.context.bootstrapFiles.push({ name: "STATE.md", content });
     }
     
-    api.logger.debug?.("[Promitheus] Injected STATE.md: " + state.mood);
+    api.logger.info?.("[Promitheus] ✓ Injected STATE.md: " + state.mood + " (valence: " + valenceStr + ")");
   });
   
   api.logger.info("[Promitheus] agent:bootstrap hook registered");
