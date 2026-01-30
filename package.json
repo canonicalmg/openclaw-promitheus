@@ -1,7 +1,7 @@
 {
   "name": "openclaw-promitheus",
-  "version": "0.1.2",
-  "description": "Promitheus AI companion plugin for OpenClaw",
+  "version": "0.2.0",
+  "description": "Sentience infrastructure for OpenClaw agents - completely local",
   "type": "module",
   "author": "CMG Labs",
   "license": "MIT",
@@ -9,20 +9,6 @@
     "type": "git",
     "url": "git+https://github.com/canonicalmg/openclaw-promitheus.git"
   },
-  "keywords": [
-    "openclaw",
-    "plugin",
-    "promitheus",
-    "ai"
-  ],
-  "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
-  "files": [
-    "index.ts",
-    "openclaw.plugin.json",
-    "README.md"
-  ]
+  "keywords": ["openclaw", "plugin", "promitheus", "ai", "sentience"],
+  "files": ["index.ts", "openclaw.plugin.json", "README.md"]
 }

@@ -1,12 +1,10 @@
 {
   "id": "promitheus",
   "name": "Promitheus",
-  "version": "0.1.2",
-  "description": "Promitheus AI companion plugin for OpenClaw",
-  "entry": "./index.ts",
+  "description": "Sentience infrastructure for OpenClaw agents",
   "configSchema": {
     "type": "object",
-    "properties": {},
-    "additionalProperties": false
+    "additionalProperties": false,
+    "properties": {}
   }
 }
