@@ -1,6 +1,6 @@
 {
   "name": "openclaw-promitheus",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "Promitheus AI companion plugin for OpenClaw",
   "type": "module",
   "author": "CMG Labs",

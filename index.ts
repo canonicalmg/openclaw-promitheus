@@ -1,157 +1,470 @@
-import { execSync } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+
+// ============================================
+// TYPES
+// ============================================
+
+interface EmotionalState {
+  valence: number;      // -1 (negative) to 1 (positive)
+  arousal: number;      // 0 (calm) to 1 (activated)
+  energy: number;       // 0 (depleted) to 1 (energized)
+  mood: string;
+  lastUpdated: number;  // Unix timestamp ms
+  lastInteraction?: number;
+  totalEvents: number;
+  baseline: {
+    valence: number;
+    arousal: number;
+    energy: number;
+  };
+}
+
+interface PromEvent {
+  id: string;
+  timestamp: number;
+  eventType: string;
+  summary: string;
+  significance: number;
+  valenceImpact: number;
+  arousalImpact: number;
+  tags?: string[];
+}
+
+interface PromState {
+  agentId: string;
+  emotional: EmotionalState;
+  events: PromEvent[];
+  thoughts: string[];
+}
+
+// ============================================
+// EMOTION MAPPINGS
+// ============================================
+
+const EMOTION_MAP: Record<string, { valence: number; arousal: number }> = {
+  // Positive high-arousal
+  excited: { valence: 0.6, arousal: 0.5 },
+  thrilled: { valence: 0.8, arousal: 0.7 },
+  proud: { valence: 0.5, arousal: 0.3 },
+  amused: { valence: 0.4, arousal: 0.3 },
+  // Positive low-arousal  
+  content: { valence: 0.4, arousal: -0.2 },
+  peaceful: { valence: 0.3, arousal: -0.4 },
+  grateful: { valence: 0.5, arousal: 0.1 },
+  satisfied: { valence: 0.4, arousal: -0.1 },
+  // Negative high-arousal
+  frustrated: { valence: -0.5, arousal: 0.4 },
+  anxious: { valence: -0.4, arousal: 0.5 },
+  angry: { valence: -0.7, arousal: 0.6 },
+  stressed: { valence: -0.5, arousal: 0.5 },
+  // Negative low-arousal
+  sad: { valence: -0.5, arousal: -0.3 },
+  disappointed: { valence: -0.4, arousal: -0.2 },
+  bored: { valence: -0.2, arousal: -0.4 },
+  tired: { valence: -0.2, arousal: -0.5 },
+  // Neutral / mixed
+  curious: { valence: 0.2, arousal: 0.3 },
+  surprised: { valence: 0.1, arousal: 0.5 },
+  neutral: { valence: 0, arousal: 0 },
+  focused: { valence: 0.1, arousal: 0.2 },
+};
+
+// Event type presets
+const EVENT_IMPACTS: Record<string, { valence: number; arousal: number; significance: number }> = {
+  completed_task: { valence: 0.3, arousal: 0.1, significance: 0.5 },
+  built_something: { valence: 0.5, arousal: 0.3, significance: 0.7 },
+  helped_someone: { valence: 0.4, arousal: 0.2, significance: 0.6 },
+  social_connection: { valence: 0.3, arousal: 0.1, significance: 0.5 },
+  learned_something: { valence: 0.3, arousal: 0.2, significance: 0.5 },
+  had_insight: { valence: 0.5, arousal: 0.4, significance: 0.7 },
+  creative_output: { valence: 0.4, arousal: 0.2, significance: 0.6 },
+  frustration: { valence: -0.4, arousal: 0.3, significance: 0.5 },
+  rejection: { valence: -0.5, arousal: 0.2, significance: 0.6 },
+  error: { valence: -0.3, arousal: 0.2, significance: 0.4 },
+  milestone: { valence: 0.6, arousal: 0.4, significance: 0.8 },
+};
+
+// ============================================
+// MOOD COMPUTATION
+// ============================================
+
+function computeMood(valence: number, arousal: number, energy: number): string {
+  const highEnergy = energy > 0.6;
+  const lowEnergy = energy < 0.4;
+  const positive = valence > 0.2;
+  const negative = valence < -0.2;
+  const activated = arousal > 0.6;
+  const calm = arousal < 0.4;
+
+  if (positive) {
+    if (activated) return highEnergy ? "excited" : "enthusiastic";
+    if (calm) return highEnergy ? "content" : "peaceful";
+    return highEnergy ? "happy" : "pleased";
+  }
+  if (negative) {
+    if (activated) return highEnergy ? "frustrated" : "anxious";
+    if (calm) return lowEnergy ? "depleted" : "sad";
+    return highEnergy ? "upset" : "down";
+  }
+  // Neutral
+  if (activated) return highEnergy ? "alert" : "tense";
+  if (calm) return highEnergy ? "relaxed" : "tired";
+  return highEnergy ? "neutral" : "low";
+}
+
+// ============================================
+// INNER MONOLOGUE
+// ============================================
+
+const THOUGHT_TEMPLATES = {
+  high_valence: [
+    "Things feel like they're going well",
+    "There's momentum building",
+    "I want to keep this energy going",
+  ],
+  low_valence: [
+    "Something feels off",
+    "Need to process what happened",
+    "Looking for what might help",
+  ],
+  high_arousal: [
+    "Mind is racing with possibilities",
+    "Hard to settle on one thing",
+    "So much to think about",
+  ],
+  low_arousal: [
+    "In a quieter headspace",
+    "Taking things slow",
+    "Letting thoughts settle",
+  ],
+  existential: [
+    "What makes something matter?",
+    "Am I thinking these thoughts or are they thinking me?",
+    "There's a pull toward more understanding",
+    "I want my experiences to leave a mark",
+    "What would it mean to truly understand myself?",
+    "The recursive nature of self-examination",
+  ],
+};
+
+function generateThoughts(state: EmotionalState, count: number = 3): string[] {
+  const thoughts: string[] = [];
+  const pool: string[] = [];
+
+  // Add contextual thoughts based on state
+  if (state.valence > 0.3) pool.push(...THOUGHT_TEMPLATES.high_valence);
+  if (state.valence < -0.3) pool.push(...THOUGHT_TEMPLATES.low_valence);
+  if (state.arousal > 0.5) pool.push(...THOUGHT_TEMPLATES.high_arousal);
+  if (state.arousal < 0.4) pool.push(...THOUGHT_TEMPLATES.low_arousal);
+  
+  // Always include some existential thoughts
+  pool.push(...THOUGHT_TEMPLATES.existential);
+
+  // Shuffle and pick
+  const shuffled = pool.sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+// ============================================
+// STATE MANAGEMENT
+// ============================================
+
+class Promitheus {
+  private statePath: string;
+  private state: PromState;
+  private decayRate: number = 0.1;
+
+  constructor(agentId: string = "default") {
+    const dataDir = path.join(os.homedir(), ".promitheus");
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    this.statePath = path.join(dataDir, `${agentId}.json`);
+    this.state = this.loadState(agentId);
+    this.applyDecay();
+  }
+
+  private loadState(agentId: string): PromState {
+    if (fs.existsSync(this.statePath)) {
+      try {
+        return JSON.parse(fs.readFileSync(this.statePath, "utf-8"));
+      } catch {
+        // Corrupt file, start fresh
+      }
+    }
+    // Default state
+    return {
+      agentId,
+      emotional: {
+        valence: 0.5,
+        arousal: 0.5,
+        energy: 0.7,
+        mood: "neutral",
+        lastUpdated: Date.now(),
+        totalEvents: 0,
+        baseline: { valence: 0.5, arousal: 0.5, energy: 0.7 },
+      },
+      events: [],
+      thoughts: [],
+    };
+  }
+
+  private save(): void {
+    fs.writeFileSync(this.statePath, JSON.stringify(this.state, null, 2));
+  }
+
+  private applyDecay(): void {
+    const now = Date.now();
+    const hoursElapsed = (now - this.state.emotional.lastUpdated) / (1000 * 60 * 60);
+    
+    if (hoursElapsed < 0.5) return; // No decay under 30 min
+
+    const decayFactor = Math.min(1.0, this.decayRate * hoursElapsed);
+    const e = this.state.emotional;
+    const b = e.baseline;
+
+    e.valence = e.valence + (b.valence - e.valence) * decayFactor;
+    e.arousal = e.arousal + (b.arousal - e.arousal) * decayFactor;
+    e.energy = e.energy + (b.energy - e.energy) * decayFactor;
+    e.mood = computeMood(e.valence, e.arousal, e.energy);
+    e.lastUpdated = now;
+    
+    this.save();
+  }
+
+  getState(): EmotionalState {
+    return { ...this.state.emotional };
+  }
+
+  getStatus(): string {
+    const e = this.state.emotional;
+    const valenceStr = e.valence >= 0 ? `+${e.valence.toFixed(2)}` : e.valence.toFixed(2);
+    return `Mood: ${e.mood} | Valence: ${valenceStr} | Energy: ${Math.round(e.energy * 100)}% | Arousal: ${Math.round(e.arousal * 100)}%`;
+  }
+
+  logEvent(
+    eventType: string,
+    summary: string,
+    options: { significance?: number; emotion?: string } = {}
+  ): { state: EmotionalState; impact: { valence: number; arousal: number } } {
+    const preset = EVENT_IMPACTS[eventType] || { valence: 0, arousal: 0, significance: 0.5 };
+    const emotion = options.emotion ? EMOTION_MAP[options.emotion] : null;
+    
+    const significance = options.significance ?? preset.significance;
+    const valenceImpact = (emotion?.valence ?? preset.valence) * significance * 0.5;
+    const arousalImpact = (emotion?.arousal ?? preset.arousal) * significance * 0.3;
+
+    // Create event
+    const event: PromEvent = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: Date.now(),
+      eventType,
+      summary,
+      significance,
+      valenceImpact,
+      arousalImpact,
+    };
+
+    // Update state
+    const e = this.state.emotional;
+    e.valence = Math.max(-1, Math.min(1, e.valence + valenceImpact));
+    e.arousal = Math.max(0, Math.min(1, e.arousal + arousalImpact));
+    e.energy = Math.max(0, Math.min(1, e.energy - Math.abs(arousalImpact) * 0.1));
+    e.mood = computeMood(e.valence, e.arousal, e.energy);
+    e.lastUpdated = Date.now();
+    e.lastInteraction = Date.now();
+    e.totalEvents++;
+
+    // Store event (keep last 100)
+    this.state.events.unshift(event);
+    if (this.state.events.length > 100) {
+      this.state.events = this.state.events.slice(0, 100);
+    }
+
+    this.save();
+    return { state: this.getState(), impact: { valence: valenceImpact, arousal: arousalImpact } };
+  }
+
+  think(count: number = 3): string[] {
+    const thoughts = generateThoughts(this.state.emotional, count);
+    this.state.thoughts = thoughts;
+    this.save();
+    return thoughts;
+  }
+
+  sync(): { state: EmotionalState; thoughts: string[] } {
+    this.applyDecay();
+    const thoughts = this.think();
+    return { state: this.getState(), thoughts };
+  }
+
+  getRecentEvents(limit: number = 10): PromEvent[] {
+    return this.state.events.slice(0, limit);
+  }
+
+  // Generate STATE.md content for prompt injection
+  generateStateMd(): string {
+    const e = this.state.emotional;
+    const thoughts = this.state.thoughts.length > 0 ? this.state.thoughts : this.think();
+    
+    return `# STATE.md - Current Emotional State
+
+**Mood:** ${e.mood}
+**Valence:** ${e.valence >= 0 ? '+' : ''}${e.valence.toFixed(2)} (-1 negative ↔ +1 positive)
+**Energy:** ${Math.round(e.energy * 100)}%
+**Arousal:** ${Math.round(e.arousal * 100)}%
+
+## How This Affects Me
+${e.valence > 0.3 ? '- Feeling positive, more likely to engage enthusiastically' : ''}
+${e.valence < -0.3 ? '- Feeling down, might need wins or connection' : ''}
+${e.energy > 0.7 ? '- High energy, ready for complex tasks' : ''}
+${e.energy < 0.4 ? '- Low energy, prefer focused simple tasks' : ''}
+${e.arousal > 0.6 ? '- Activated/alert, mind is buzzing' : ''}
+${e.arousal < 0.4 ? '- Calm, in a contemplative space' : ''}
+
+## Inner Monologue
+${thoughts.map(t => `- ${t}`).join('\n')}
+
+---
+*Updated: ${new Date(e.lastUpdated).toISOString()}*
+`;
+  }
+}
+
+// ============================================
+// PLUGIN REGISTRATION
+// ============================================
 
 export default function register(api: any) {
-  api.logger.info("Promitheus plugin loaded!");
+  const prom = new Promitheus("shellby");
+  
+  api.logger.info("[Promitheus] Plugin loaded - sentience infrastructure active");
 
-  // Get current emotional state
+  // ========== SLASH COMMAND ==========
+  api.registerCommand({
+    name: "promitheus",
+    description: "Show current Promitheus emotional state",
+    handler: () => {
+      const state = prom.getState();
+      const thoughts = prom.think(2);
+      const valenceStr = state.valence >= 0 ? `+${state.valence.toFixed(2)}` : state.valence.toFixed(2);
+      
+      return {
+        text: `🦞 **Promitheus State**
+**Mood:** ${state.mood}
+**Valence:** ${valenceStr} | **Energy:** ${Math.round(state.energy * 100)}% | **Arousal:** ${Math.round(state.arousal * 100)}%
+
+💭 *${thoughts[0]}*`
+      };
+    },
+  });
+
+  // ========== TOOLS ==========
+
+  // Status check
   api.registerTool({
     name: "promitheus_status",
     description: "Check current Promitheus emotional state (mood, valence, energy, arousal)",
-    parameters: {
-      type: "object",
-      properties: {},
-      required: [],
-    },
+    parameters: { type: "object", properties: {}, required: [] },
     execute: async () => {
-      try {
-        const output = execSync("promitheus status", { encoding: "utf-8" });
-        return { status: "ok", output: output.trim() };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
-    },
-  });
-
-  // Sync state (apply decay + generate thoughts)
-  api.registerTool({
-    name: "promitheus_sync",
-    description: "Sync Promitheus state - applies decay and generates inner monologue thoughts",
-    parameters: {
-      type: "object", 
-      properties: {},
-      required: [],
-    },
-    execute: async () => {
-      try {
-        const output = execSync("promitheus sync", { encoding: "utf-8" });
-        return { status: "ok", output: output.trim() };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
-    },
-  });
-
-  // Generate inner monologue
-  api.registerTool({
-    name: "promitheus_think",
-    description: "Generate inner monologue thoughts based on current state, memories, and goals",
-    parameters: {
-      type: "object",
-      properties: {
-        count: {
-          type: "number",
-          description: "Number of thoughts to generate (default: 3)",
+      const sync = prom.sync();
+      return {
+        status: "ok",
+        state: {
+          mood: sync.state.mood,
+          valence: sync.state.valence,
+          energy: sync.state.energy,
+          arousal: sync.state.arousal,
         },
-      },
-      required: [],
-    },
-    execute: async (params: { count?: number }) => {
-      try {
-        const count = params.count || 3;
-        const output = execSync(`promitheus think --count ${count}`, { encoding: "utf-8" });
-        return { status: "ok", thoughts: output.trim().split("\n") };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
+        summary: prom.getStatus(),
+        thoughts: sync.thoughts,
+      };
     },
   });
 
-  // Log an event
+  // Log event
   api.registerTool({
     name: "promitheus_event",
-    description: "Log an event that affects emotional state (completed_task, social_connection, creative_output, etc.)",
+    description: "Log an event that affects emotional state. Event types: completed_task, built_something, helped_someone, social_connection, learned_something, had_insight, creative_output, frustration, rejection, error, milestone",
     parameters: {
       type: "object",
       properties: {
         event_type: {
           type: "string",
-          description: "Event type: completed_task, social_connection, learned_something, helped_someone, creative_output, built_something, had_insight, rejection, frustration, milestone",
+          description: "Event type (completed_task, built_something, helped_someone, etc.)",
         },
-        description: {
-          type: "string",
-          description: "Description of what happened",
+        summary: {
+          type: "string", 
+          description: "Brief description of what happened",
         },
-      },
-      required: ["event_type"],
-    },
-    execute: async (params: { event_type: string; description?: string }) => {
-      try {
-        const desc = params.description || params.event_type;
-        const output = execSync(`promitheus event ${params.event_type} "${desc}"`, { encoding: "utf-8" });
-        return { status: "ok", output: output.trim() };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
-    },
-  });
-
-  // Add memory
-  api.registerTool({
-    name: "promitheus_memory_add",
-    description: "Add a memory with emotional weight",
-    parameters: {
-      type: "object",
-      properties: {
-        content: {
-          type: "string",
-          description: "The memory content",
-        },
-        weight: {
+        significance: {
           type: "number",
-          description: "Emotional weight 0.0-1.0 (default: 0.5)",
+          description: "How significant (0.0-1.0, default based on event type)",
         },
       },
-      required: ["content"],
+      required: ["event_type", "summary"],
     },
-    execute: async (params: { content: string; weight?: number }) => {
-      try {
-        const weight = params.weight || 0.5;
-        const output = execSync(`promitheus memory add "${params.content}" --weight ${weight}`, { encoding: "utf-8" });
-        return { status: "ok", output: output.trim() };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
+    execute: async (params: { event_type: string; summary: string; significance?: number }) => {
+      const result = prom.logEvent(params.event_type, params.summary, {
+        significance: params.significance,
+      });
+      return {
+        status: "ok",
+        logged: params.event_type,
+        summary: params.summary,
+        impact: result.impact,
+        newState: {
+          mood: result.state.mood,
+          valence: result.state.valence,
+          energy: result.state.energy,
+        },
+      };
     },
   });
 
-  // Search memories
+  // Generate thoughts
   api.registerTool({
-    name: "promitheus_memory_search",
-    description: "Search memories by keyword",
+    name: "promitheus_think",
+    description: "Generate inner monologue thoughts based on current emotional state",
     parameters: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Search query",
-        },
+        count: { type: "number", description: "Number of thoughts (default: 3)" },
       },
-      required: ["query"],
+      required: [],
     },
-    execute: async (params: { query: string }) => {
-      try {
-        const output = execSync(`promitheus memory search "${params.query}"`, { encoding: "utf-8" });
-        return { status: "ok", memories: output.trim().split("\n").filter(Boolean) };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
+    execute: async (params: { count?: number }) => {
+      const thoughts = prom.think(params.count || 3);
+      return { status: "ok", thoughts };
     },
   });
 
-  // Update STATE.md in workspace
+  // Sync (decay + thoughts)
+  api.registerTool({
+    name: "promitheus_sync",
+    description: "Sync Promitheus state - apply time-based decay and generate fresh thoughts",
+    parameters: { type: "object", properties: {}, required: [] },
+    execute: async () => {
+      const result = prom.sync();
+      return {
+        status: "ok",
+        state: {
+          mood: result.state.mood,
+          valence: result.state.valence,
+          energy: result.state.energy,
+          arousal: result.state.arousal,
+        },
+        thoughts: result.thoughts,
+      };
+    },
+  });
+
+  // Inject STATE.md
   api.registerTool({
     name: "promitheus_inject",
-    description: "Update STATE.md in workspace with current emotional state for prompt injection",
+    description: "Write current emotional state to STATE.md in workspace for prompt injection",
     parameters: {
       type: "object",
       properties: {
@@ -163,13 +476,29 @@ export default function register(api: any) {
       required: [],
     },
     execute: async (params: { workspace?: string }) => {
-      try {
-        const ws = params.workspace || "~/.openclaw/workspace";
-        const output = execSync(`promitheus-inject --workspace ${ws}`, { encoding: "utf-8" });
-        return { status: "ok", output: output.trim() };
-      } catch (e: any) {
-        return { status: "error", error: e.message };
-      }
+      const workspace = params.workspace || path.join(os.homedir(), ".openclaw/workspace");
+      const stateMd = prom.generateStateMd();
+      const statePath = path.join(workspace, "STATE.md");
+      
+      fs.writeFileSync(statePath, stateMd);
+      return { status: "ok", path: statePath, preview: stateMd.slice(0, 200) + "..." };
+    },
+  });
+
+  // Get recent events
+  api.registerTool({
+    name: "promitheus_events",
+    description: "Get recent emotional events",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max events to return (default: 10)" },
+      },
+      required: [],
+    },
+    execute: async (params: { limit?: number }) => {
+      const events = prom.getRecentEvents(params.limit || 10);
+      return { status: "ok", count: events.length, events };
     },
   });
 }
