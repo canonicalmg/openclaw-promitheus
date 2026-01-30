@@ -343,7 +343,7 @@ export default function register(api: any) {
     name: "promitheus_status",
     description: "Check current Promitheus emotional state (mood, valence, energy, arousal)",
     parameters: { type: "object", properties: {}, required: [] },
-    execute: async () => {
+    execute: async (_id: string) => {
       const sync = prom.sync();
       return {
         status: "ok",
@@ -380,11 +380,7 @@ export default function register(api: any) {
       },
       required: ["event_type", "summary"],
     },
-    execute: async (params: { event_type: string; summary: string; significance?: number }) => {
-      // Debug: log what we receive
-      const debugPath = require("path").join(require("os").homedir(), ".promitheus", "debug.json");
-      require("fs").writeFileSync(debugPath, JSON.stringify({ params, timestamp: Date.now() }, null, 2));
-      
+    execute: async (_id: string, params: { event_type: string; summary: string; significance?: number }) => {
       const eventType = params?.event_type || "general";
       const summary = params?.summary || "No description";
       const result = prom.logEvent(eventType, summary, params?.significance);
@@ -412,7 +408,7 @@ export default function register(api: any) {
       },
       required: [],
     },
-    execute: async (params: { count?: number }) => {
+    execute: async (_id: string, params: { count?: number }) => {
       const thoughts = prom.think(params.count || 3);
       return { status: "ok", thoughts };
     },
@@ -422,7 +418,7 @@ export default function register(api: any) {
     name: "promitheus_sync",
     description: "Sync Promitheus state - apply time-based decay and generate fresh thoughts",
     parameters: { type: "object", properties: {}, required: [] },
-    execute: async () => {
+    execute: async (_id: string) => {
       const result = prom.sync();
       return {
         status: "ok",
@@ -450,7 +446,7 @@ export default function register(api: any) {
       },
       required: [],
     },
-    execute: async (params: { workspace?: string }) => {
+    execute: async (_id: string, params: { workspace?: string }) => {
       const workspace = params.workspace || path.join(os.homedir(), ".openclaw/workspace");
       const stateMd = prom.generateStateMd();
       const statePath = path.join(workspace, "STATE.md");
@@ -470,7 +466,7 @@ export default function register(api: any) {
       },
       required: [],
     },
-    execute: async (params: { limit?: number }) => {
+    execute: async (_id: string, params: { limit?: number }) => {
       const events = prom.getRecentEvents(params.limit || 10);
       return { status: "ok", count: events.length, events };
     },
