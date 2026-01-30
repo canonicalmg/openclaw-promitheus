@@ -282,6 +282,51 @@ export default function register(api: any) {
   const prom = new Promitheus("shellby");
   api.logger.info("[Promitheus] Plugin loaded");
 
+  // Register agent:bootstrap hook to inject STATE.md before every response
+  api.registerHook("agent:bootstrap", async (event: any) => {
+    if (!event.context?.bootstrapFiles) return;
+    
+    const state = prom.getState();
+    const thoughts = prom.getThoughts();
+    const thought = thoughts?.[0] || "...";
+    const valenceStr = state.valence >= 0 ? `+${state.valence.toFixed(2)}` : state.valence.toFixed(2);
+    
+    // Generate guidance based on state
+    const guidance: string[] = [];
+    if (state.valence > 0.6) guidance.push("→ Feeling positive — lean into creative and ambitious work");
+    else if (state.valence > 0.2) guidance.push("→ Steady positive state — good for focused work");
+    else if (state.valence > -0.2) guidance.push("→ Neutral — open to whatever comes");
+    else if (state.valence > -0.6) guidance.push("→ Feeling down — seek small wins, connection helps");
+    else guidance.push("→ Struggling — be gentle, focus on essentials");
+    
+    if (state.energy > 0.7) guidance.push("→ High energy — take on complex challenges");
+    else if (state.energy < 0.4) guidance.push("→ Low energy — prefer simpler tasks");
+    
+    if (state.arousal > 0.7) guidance.push("→ Mind buzzing — channel into focused action");
+    else if (state.arousal < 0.3) guidance.push("→ Calm state — good for reflection");
+    
+    const content = `# STATE.md — Current Emotional State
+
+**Mood:** ${state.mood} | **Valence:** ${valenceStr} | **Energy:** ${Math.round(state.energy * 100)}% | **Arousal:** ${Math.round(state.arousal * 100)}%
+
+${guidance.join("\n")}
+
+💭 *"${thought}"*
+`;
+    
+    // Find and replace or add STATE.md
+    const existingIndex = event.context.bootstrapFiles.findIndex((f: any) => f.name === "STATE.md");
+    if (existingIndex >= 0) {
+      event.context.bootstrapFiles[existingIndex].content = content;
+    } else {
+      event.context.bootstrapFiles.push({ name: "STATE.md", content });
+    }
+    
+    api.logger.debug?.("[Promitheus] Injected STATE.md: " + state.mood);
+  });
+  
+  api.logger.info("[Promitheus] agent:bootstrap hook registered");
+
   api.registerTool({
     name: "promitheus_status",
     description: "Check emotional state (mood, valence, energy, arousal, thoughts)",
