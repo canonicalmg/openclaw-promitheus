@@ -1,8 +1,25 @@
 {
   "name": "openclaw-promitheus",
   "version": "0.0.1",
+  "description": "Promitheus AI companion plugin for OpenClaw",
   "type": "module",
+  "author": "CMG Labs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/canonicalmg/openclaw-promitheus.git"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "promitheus",
+    "ai"
+  ],
   "openclaw": {
     "extensions": ["./index.ts"]
-  }
+  },
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json"
+  ]
 }
