@@ -279,8 +279,12 @@ ${eventLines || '- (no recent events)'}
 // ============================================
 
 export default function register(api: any) {
-  const prom = new Promitheus("shellby");
-  api.logger.info("[Promitheus] Plugin loaded");
+  // Get agent ID from plugin config, default to "default"
+  const config = api.pluginConfig as { agentId?: string } | undefined;
+  const agentId = config?.agentId || "default";
+  
+  const prom = new Promitheus(agentId);
+  api.logger.info(`[Promitheus] Plugin loaded for agent: ${agentId}`);
 
   // Use before_agent_start hook to inject STATE.md context (api.on works for plugins, not registerHook)
   api.on("before_agent_start", async () => {

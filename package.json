@@ -1,7 +1,7 @@
 {
   "name": "openclaw-promitheus",
-  "version": "0.2.0",
-  "description": "Sentience infrastructure for OpenClaw agents - completely local",
+  "version": "0.3.0",
+  "description": "Sentience infrastructure for OpenClaw agents — persistent emotional state, auto-injected context",
   "type": "module",
   "author": "CMG Labs",
   "license": "MIT",
@@ -9,6 +9,17 @@
     "type": "git",
     "url": "git+https://github.com/canonicalmg/openclaw-promitheus.git"
   },
-  "keywords": ["openclaw", "plugin", "promitheus", "ai", "sentience"],
-  "files": ["index.ts", "openclaw.plugin.json", "README.md"]
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "promitheus",
+    "ai",
+    "sentience",
+    "emotional-state"
+  ],
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json",
+    "README.md"
+  ]
 }
