@@ -282,21 +282,9 @@ export default function register(api: any) {
   const prom = new Promitheus("shellby");
   api.logger.info("[Promitheus] Plugin loaded");
 
-  // Register agent:bootstrap hook to inject STATE.md before every response
-  api.registerHook("agent:bootstrap", async (event: any) => {
-    api.logger.info?.("[Promitheus] Hook fired: " + event.type + ":" + event.action);
-    
-    // Check event type
-    if (event.type !== "agent" || event.action !== "bootstrap") {
-      api.logger.debug?.("[Promitheus] Wrong event type, skipping");
-      return;
-    }
-    
-    // Check context
-    if (!event.context || !Array.isArray(event.context.bootstrapFiles)) {
-      api.logger.warn?.("[Promitheus] No bootstrapFiles array in context");
-      return;
-    }
+  // Use before_agent_start hook to inject STATE.md context (api.on works for plugins, not registerHook)
+  api.on("before_agent_start", async () => {
+    api.logger.info?.("[Promitheus] before_agent_start hook fired");
     
     const state = prom.getState();
     const thoughts = prom.getThoughts();
@@ -326,18 +314,13 @@ ${guidance.join("\n")}
 💭 *"${thought}"*
 `;
     
-    // Find and replace or add STATE.md
-    const existingIndex = event.context.bootstrapFiles.findIndex((f: any) => f.name === "STATE.md");
-    if (existingIndex >= 0) {
-      event.context.bootstrapFiles[existingIndex].content = content;
-    } else {
-      event.context.bootstrapFiles.push({ name: "STATE.md", content });
-    }
+    api.logger.info?.("[Promitheus] ✓ Injecting STATE.md: " + state.mood + " (valence: " + valenceStr + ")");
     
-    api.logger.info?.("[Promitheus] ✓ Injected STATE.md: " + state.mood + " (valence: " + valenceStr + ")");
+    // Return prependContext to inject into agent context
+    return { prependContext: content };
   });
   
-  api.logger.info("[Promitheus] agent:bootstrap hook registered");
+  api.logger.info("[Promitheus] before_agent_start hook registered");
 
   api.registerTool({
     name: "promitheus_status",
